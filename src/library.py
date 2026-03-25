@@ -12,7 +12,7 @@ mpl.rcParams['text.usetex'] = False
 
 """ Statistics Methods """
 
-def red_to_den(factor: np.array, numb: np.array): # vectorize
+def red_to_den(factor: np.array, numb: np.array, criteria = 1/8): # vectorize
 
     total = factor.shape[0]
 
@@ -1290,3 +1290,69 @@ def retry(max_tries=3, delay_seconds=1):
                     time.sleep(delay_seconds)
         return wrapper_retry
     return decorator_retry
+
+
+def plot_w_text():
+    import matplotlib.pyplot as plt
+    import matplotlib.gridspec as gridspec
+
+    # Your parameters as a dict
+    params = {
+        "t total": 1.1949709,
+        "E kinet": 0.093147244,
+        "E poten": -0.093147244,
+        "E total": 1.0,
+        "r coord": 12.0,
+        "longd":   0.0,
+        "a SpinP": 0.7,
+        "v local": 0.40393011,
+    }
+
+    fig = plt.figure(figsize=(12, 5))
+    gs  = gridspec.GridSpec(1, 2, width_ratios=[1.2, 1])  # plot wider than param panel
+
+    # --- Left: your plot ---
+    ax_plot = fig.add_subplot(gs[0])
+    ax_plot.plot([1, 2, 3], [1, 4, 9])   # replace with your actual plot
+    ax_plot.set_title("My Plot")
+
+    # --- Right: parameter panel ---
+    ax_text = fig.add_subplot(gs[1])
+    ax_text.axis('off')                   # hide axes entirely
+
+    # Build text from params
+    lines = [f"{k:<14} = {v}" for k, v in params.items()]
+    text  = "\n".join(lines)
+
+    ax_text.text(
+        0.05, 0.95,          # position (axes fraction)
+        text,
+        transform=ax_text.transAxes,
+        fontsize=10,
+        verticalalignment='top',
+        fontfamily='monospace',  # monospace keeps = signs aligned
+        bbox=dict(boxstyle='round', facecolor='white', alpha=0.5)
+    )
+
+    plt.tight_layout()
+    plt.savefig('plot_with_params.png', dpi=150)
+    plt.show()
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.spatial import ConvexHull
+
+def hull_from_points(points = np.random.rand(100, 2)):
+
+
+    hull = ConvexHull(points)
+
+    fig, ax = plt.subplots()
+    ax.scatter(points[:, 0], points[:, 1], color='steelblue')
+
+    # hull.simplices contains the indices of the edges
+    for simplex in hull.simplices:
+        ax.plot(points[simplex, 0], points[simplex, 1], 'k-')
+
+    plt.show()
+    return hull.simplices

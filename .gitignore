@@ -1,5 +1,6 @@
 # Directories
 exp_data/
+series/*pkl
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
