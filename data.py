@@ -1,4 +1,4 @@
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+vscode_lsp_terminal_prompt_tracker= {}ator import inset_axes
 from scipy.stats import skew, kurtosis
 from scipy.interpolate import griddata
 from scipy.ndimage import gaussian_filter
@@ -7,7 +7,7 @@ matplotlib.use("Agg")  # must be FIRST, before pyplot or anything else
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from copy import deepcopy
-#from src.library import *
+from src.library import *
 import pandas as pd
 import numpy as np
 import os, glob, sys, time
@@ -84,9 +84,6 @@ def imporfromfile(file, identifier):
         "rurl":  rurl
     }
 
-fig = plt.figure()
-plt.ion()
-
 def render(t, x, y, d, identifier ,bins=100):
     fig.clf()
     ax = fig.add_subplot(111)
@@ -133,6 +130,10 @@ def _animate(_id):
         out.write(cv2.imread(f))
 
     out.release()
+
+if "e-" in sys.argv:
+    fig = plt.figure()
+    plt.ion()
 
 if len(sys.argv) == 1:
     files = glob.glob(f'./series/table/*.pkl')
@@ -267,11 +268,9 @@ for _, data_j in enumerate(datas):
         plt.close(fig)
 
     plt.close(fig)
+    if "e-" in sys.argv:
+        _animate(_id)
 
-    _animate(_id)
-
-if "e-" in sys.argv:
-    exit()
 
 fig, axd = plt.subplot_mosaic(
     [["left", "middle", "right"]],
@@ -336,7 +335,7 @@ fig, axd = plt.subplot_mosaic(
     sharey=True,
     gridspec_kw={"width_ratios": [1, 1], "wspace": 0.05}
 )
-title = r"Ratio $N_{los}/N_{crs}$"
+title = r"Ratio $N^{ideal}_{los}/N^{ideal}_{crs}$"
 
 ratio0 = np.array([np.mean(nlos0/ncrs) for (nlos0,ncrs) in zip(data4i3["Nlos0"],data4i3["Ncrs"])]) 
 ratio1 = np.array([np.median(nlos1/ncrs) for (nlos1,ncrs) in zip(data4i3["Nlos0"],data4i3["Ncrs"])])
