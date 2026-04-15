@@ -5,6 +5,7 @@ from scipy import spatial
 from scipy.spatial import cKDTree
 from scipy import interpolate
 import matplotlib as mpl
+from functools import wraps
 
 mpl.rcParams['text.usetex'] = False
 
@@ -549,87 +550,6 @@ def local_cr_spectra(size):
     plt.savefig('series/' + output + f'{INPUT}.png', dpi=300)
     plt.close(fig)
 
-
-""" Ionization Rate Parameters"""
-
-""" Arepo Process Methods (written by A. Mayer at MPA July 2024)
-
-(Original Functions Made By A. Mayer (Max Planck Institute) + contributions B. E. Velazquez (University of Texas))
-"""
-def get_magnetic_field_at_points(x, Bfield, rel_pos):
-	n = len(rel_pos[:,0])
-	local_fields = np.zeros((n,3))
-	for  i in range(n):
-		local_fields[i,:] = Bfield[i,:]
-	return local_fields
-
-def get_density_at_points(x, Density, Density_grad, rel_pos):
-	n = len(rel_pos[:,0])	
-	local_densities = np.zeros(n)
-	for  i in range(n):
-		local_densities[i] = Density[i] + np.dot(Density_grad[i,:], rel_pos[i,:])
-	return local_densities
-
-def find_points_and_relative_positions(x, Pos, VoronoiPos):
-    dist, cells = spatial.KDTree(Pos[:]).query(x, k=1, workers=-1)
-    rel_pos = VoronoiPos[cells] - x
-    return dist, cells, rel_pos
-
-def find_points_and_relative_positions_tree_dependent(tree, x, Pos, VoronoiPos):
-    dist, cells = _cached_tree.query(x, k=1, workers=-1)
-    rel_pos = VoronoiPos[cells] - x
-    return dist, cells, rel_pos
-
-def find_points_and_relative_positions(x, Pos, VoronoiPos):
-    global _cached_tree, _cached_pos
-    if _cached_tree is None or not np.array_equal(Pos, _cached_pos):
-        _cached_tree = cKDTree(Pos)
-        _cached_pos = Pos.copy()
-
-    dist, cells = _cached_tree.query(x, k=1, workers=-1)
-    rel_pos = VoronoiPos[cells] - x
-    return dist, cells, rel_pos
-
-def find_points_and_get_fields(x, Bfield, Density, Density_grad, Pos, VoronoiPos):
-	dist, cells, rel_pos = find_points_and_relative_positions(x, Pos, VoronoiPos)
-	local_fields = get_magnetic_field_at_points(x, Bfield[cells], rel_pos)
-	local_densities = get_density_at_points(x, Density[cells], Density_grad[cells], rel_pos)
-	abs_local_fields = np.sqrt(np.sum(local_fields**2,axis=1))
-	return local_fields, abs_local_fields, local_densities, cells
-	
-def Heun_step(x, dx, Bfield, Density, Density_grad, Pos, VoronoiPos, Volume, bdirection=None):
-
-    # campo en x, mangitud campo en x, densidad en x y ID de la celda
-    local_fields_1, abs_local_fields_1, local_densities, cells = find_points_and_get_fields(
-        x, Bfield, Density, Density_grad, Pos, VoronoiPos
-    )
-
-    # vector unitario en la dirección del campo en x
-    local_fields_1 = local_fields_1 / np.tile(abs_local_fields_1, (3, 1)).T
-
-    # Volume de la celda en la que está x
-    CellVol = Volume[cells]
-
-    # radio de esfera con volumen CellVol
-    scaled_dx = dx * ((3/4) * CellVol / np.pi)**(1/3)
-
-    # paso intermedio en x
-    x_tilde = x + 0.5 * scaled_dx[:, np.newaxis] * local_fields_1
-
-    # campo en x_intermedio, mangitud campo en x_intermedio, densidad en x_intermedio y ID de la celda intermedia
-    local_fields_2, abs_local_fields_2, _, _ = find_points_and_get_fields(
-        x_tilde, Bfield, Density, Density_grad, Pos, VoronoiPos
-    )
-    # vector unitario en la dirección del campo en x intermedio
-    local_fields_2 = local_fields_2 / np.tile(abs_local_fields_2, (3, 1)).T
-
-    # promedio entre paso inicial e intermedio
-    x_final = x + 0.5 * scaled_dx[:, np.newaxis] * (local_fields_1 + local_fields_2)
-
-    return x_final, abs_local_fields_1, local_densities, CellVol
-
-def Euler_step(x, dx, Bfield, Density, Density_grad, Pos, VoronoiPos, Volume, bdirection=None):
-
     # campo en x, mangitud campo en x, densidad en x y ID de la celda
     local_fields_1, abs_local_fields_1, local_densities, cells = find_points_and_get_fields(
         x, Bfield, Density, Density_grad, Pos, VoronoiPos
@@ -996,16 +916,6 @@ def eval_reduction(field, numb, follow_index, threshold):
 
     return np.array(R10), np.array(Numb100), np.array(B100), filter_mask
 
-def fibonacci_sphere(samples=20):
-    phi = np.pi * (3. - np.sqrt(5.))  # Golden angle
-    y = np.linspace(1 - 1/samples, -1 + 1/samples, samples)  # Even spacing in y
-    radius = np.sqrt(1 - y**2)  # Compute radius for each point
-    theta = phi * np.arange(samples)  # Angle increment
-
-    x = radius * np.cos(theta)
-    z = radius * np.sin(theta)
-    return np.vstack((x, y, z)).T  # Stack into a (N, 3) array
-
 def pocket_finder(bfield, numb, p_r, plot=False):
     #pocket_finder(bfield, p_r, B_r, img=i, plot=False)
     """  
@@ -1155,63 +1065,6 @@ def find_insertion_point(array, val):
             return i  # Insert before index i
     return len(array)  # Insert at the end if p_r is greater than or equal to all elements
 
-def tda(X, distro):
-    # persistence diagrams and barcodes to identify structures
-    # mapper to transform dataset into a easily understandable graph
-    # others
-    try:
-        import plotly.graph_objects as go
-    except ImportError:
-        raise ImportError(
-            "The package 'plotly' is not installed. "
-            "Install it with:\n\n    pip install plotly"
-        )
-
-    try:
-        from ripser import ripser
-    except ImportError:
-        raise ImportError(
-            "The package 'ripser' is not installed. "
-            "Install it with:\n\n    pip install ripser"
-        )
-
-    try:
-        from persim import plot_diagrams
-    except ImportError:
-        raise ImportError(
-            "The package 'persim' is not installed. "
-            "Install it with:\n\n    pip install persim"
-        )
-
-    diagrams = ripser(X, maxdim=2)["dgms"]
-
-    # Plot the diagram
-    fig = plt.figure()
-    plot_diagrams(diagrams)
-
-    # Save it to a file (e.g., PNG or PDF)
-    plt.savefig(f"images/xyz_distro/pd_{distro}.png", dpi=300, bbox_inches='tight')
-    plt.close(fig)
-
-def dendogram_analysis(DensityField):
-
-    from astrodendro import Dendrogram
-    d = Dendrogram.compute(DensityField, min_value=10e+4)
-    p = d.plotter()
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1)
-
-    # Plot the whole tree
-    p.plot_tree(ax, color='black')
-
-    # Highlight two branches
-    p.plot_tree(ax, structure=8, color='red', lw=2, alpha=0.5)
-    p.plot_tree(ax, structure=24, color='orange', lw=2, alpha=0.5)
-
-    # Add axis labels
-    ax.set_xlabel("Structure")
-    ax.set_ylabel("Flux")
-
 def use_lock_and_save(path):
     from filelock import FileLock
     """
@@ -1272,28 +1125,7 @@ def email_on_failure(sender_email, password, recipient_email):
         return wrapper
     return decorator
 
-import time
-from functools import wraps
-
-def retry(max_tries=3, delay_seconds=1):
-    def decorator_retry(func):
-        @wraps(func)
-        def wrapper_retry(*args, **kwargs):
-            tries = 0
-            while tries < max_tries:
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    tries += 1
-                    if tries == max_tries:
-                        raise e
-                    time.sleep(delay_seconds)
-        return wrapper_retry
-    return decorator_retry
-
-
 def plot_w_text():
-    import matplotlib.pyplot as plt
     import matplotlib.gridspec as gridspec
 
     # Your parameters as a dict
@@ -1338,13 +1170,10 @@ def plot_w_text():
     plt.savefig('plot_with_params.png', dpi=150)
     plt.show()
 
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.spatial import ConvexHull
 
 def hull_from_points(points = np.random.rand(100, 2)):
 
-
+    from scipy.spatial import ConvexHull
     hull = ConvexHull(points)
 
     fig, ax = plt.subplots()

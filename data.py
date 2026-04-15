@@ -1,13 +1,19 @@
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.stats import skew, kurtosis
+from scipy.interpolate import griddata
+from scipy.ndimage import gaussian_filter
+import matplotlib
+matplotlib.use("Agg")  # must be FIRST, before pyplot or anything else
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from copy import deepcopy
-from src.library import *
+#from src.library import *
 import pandas as pd
 import numpy as np
-import os, glob
-
+import os, glob, sys, time
+import numpy as np
+import cv2
+import glob
 mpl.rcParams['text.usetex'] = True
 MARKERS = ['v', 'o']
 COLORS  = ["#8E2BAF", "#148A02"]
@@ -41,6 +47,8 @@ def imporfromfile(file, identifier):
     surf  = df["surv_fraction"].to_numpy()[_]
     rurl = [np.mean(ru-rl) for (ru,rl) in zip(factu, factl)]
 
+    radius = np.ceil(np.max([np.max(ris) for ris in x])*100)/100
+
     if identifier == '6i4'   or identifier == '6a4':
         radius = np.ceil(np.max([np.max(ris) for ris in x])*100)/100
     elif identifier == '4i3' or identifier == '4a3':
@@ -51,6 +59,14 @@ def imporfromfile(file, identifier):
         radius = 0.2
     elif identifier == '2i0' or identifier == '2a0':
         radius = 0.1
+        
+
+
+    if "e-" in identifier:
+        radius = float(f"1.0{identifier[1:]}")
+    print(radius)
+
+    
 
     return {
         "id": identifier,
@@ -68,25 +84,87 @@ def imporfromfile(file, identifier):
         "rurl":  rurl
     }
 
-files = glob.glob(f'./series/data_*i*.pkl')
+fig = plt.figure()
+plt.ion()
 
-assert len(files) == 5, "Some IC is missing"
+def render(t, x, y, d, identifier ,bins=100):
+    fig.clf()
+    ax = fig.add_subplot(111)
+    ax.set_title(f"{identifier} - t = {t}" )
+    divisions = x.shape[0]//10
+    print(divisions)
+
+    if d is not None:
+        xi = np.linspace(x.min(), x.max(), divisions)
+        yi = np.linspace(y.min(), y.max(), divisions)
+        xi, yi = np.meshgrid(xi, yi)
+        zi = griddata((x, y), d, (xi, yi), method="linear")
+        im = ax.imshow(
+            zi, origin="lower", aspect="auto",
+            extent=[x.min(), x.max(), y.min(), y.max()],
+            cmap="inferno"
+        )
+        fig.colorbar(im, label="density")
+    else:
+        counts, xedges, yedges = np.histogram2d(x, y, bins=bins)
+        smoothed = gaussian_filter(d, sigma=5)
+        im = ax.imshow(
+            smoothed.T, origin="lower", aspect="auto",
+            extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
+            cmap="inferno"
+        )
+        fig.colorbar(im, label="density")
+
+    fig.canvas.draw()
+    fig.canvas.flush_events()
+    name = str(t).split(".")[0] + str(t).split(".")[1]
+    fig.savefig(f"./series/{_id}/{name}.png")
+    plt.pause(0.2)
+
+def _animate(_id):
+    frames = sorted(glob.glob(f"./series/{_id}/3*.png") + glob.glob(f"./series/{_id}/4*.png"))
+    
+    first = cv2.imread(frames[0])
+    h, w = first.shape[:2]
+
+    out = cv2.VideoWriter(f"./series/{_id}/out.mp4", cv2.VideoWriter_fourcc(*"mp4v"), fps=4, frameSize=(w, h))
+
+    for f in frames:
+        out.write(cv2.imread(f))
+
+    out.release()
+
+if len(sys.argv) == 1:
+    files = glob.glob(f'./series/table/*.pkl')
+    print(files)
+    n = -3
+elif sys.argv[1] == "-e":
+    files = glob.glob(f'./series/rloc/*.pkl')
+    n = -4
+    print(files)
+
+#assert len(files) == 5, "Some IC is missing"
 
 if files:    
     config = {}
     for file in files:
-        ID = file.split('.')[-2][-3:]
-        print(file, ID)
+        ID = file.split('.')[-2][n:]
+        print(ID, file)
         os.makedirs(f"./series/{ID}", exist_ok=True)
         config[f'data{ID}'] = imporfromfile(file,ID)
 
     globals().update(config) # This injects every key as a variable in your script
 
-print(data2i0.keys())
-print(data2i1.keys())
-print(data2i2.keys())
-print(data4i3.keys())
-print(data6i4.keys())
+
+if len(sys.argv) == 1:
+    datas = [data6i4, data2i0, data2i1, data2i2, data4i3]
+elif sys.argv[1] == "-e":
+    datas = []
+    for f in files:
+        ID = f.split('.')[-2][n:]
+        datas += [globals()[f'data{ID}']]
+
+print(len(datas))
 
 """ Re-Make plot 3.1 of the thesis for data 2*0"""
 
@@ -94,48 +172,67 @@ print(data6i4.keys())
 n_min = np.inf
 n_max = 0.0
 
-for _, data_j in enumerate([data6i4, data2i0, data2i1, data2i2, data4i3]): 
+for _, data_j in enumerate(datas): 
+    
     _id     =  data_j["id"]
-    print(_id)
     total_snaps = data_j['t'].shape[0]
     for j in range(total_snaps): 
         factu   = data_j["factu"][j]
         mask = factu < 1
+        try:
+            n_min = min(n_min, data_j["n"][j][mask].min())*(1-0.01)
+            n_max = max(n_max, data_j["n"][j][mask].max())*1.01
+        except:
+            continue
 
-        n_min = min(n_min, data_j["n"][j][mask].min())*(1-0.01)
-        n_max = max(n_max, data_j["n"][j][mask].max())*1.01
+    for j in range(total_snaps-1,0,-1):
 
-    for j in range(total_snaps): 
- 
         _time   = data_j["t"][j]
         surf    = data_j["surf"][j]
         factu   = data_j["factu"][j]
         densit  = data_j["n"][j]
         radius  = data_j['rloc']
-
+        
+        if False:
+            x, y, z    = data_j['x'][j][:,0], data_j['x'][j][:,1], data_j['x'][j][:,2]
+            
+            _slice = np.logical_and((z < radius/20), (z > -radius/20))
+            print(np.sum(_slice),_slice.shape[0])
+            render(_time, x[_slice], y[_slice], np.log10(densit[_slice]), _id)
+            #render(_time, x, y, np.log10(densit), _id)
+            
         mask = factu < 1
         f = np.sum(mask)/factu.shape[0]
+        if np.sum(mask) == 0:
+            continue
 
         densit = densit[mask]
         factu  = factu [mask]
 
         fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12, 6))
         
-        num_bins = 80
+        if len(sys.argv) == 1:
+            num_bins = 80
+        elif sys.argv[1] == "-e":
+            num_bins = np.sum(mask) // 10
+            print("bins = ", num_bins)
+        if num_bins == 0:
+            plt.close(fig)
+            continue
 
         n_ref, mean_vec, median_vec, ten_vec, sample_size = red_to_den(factu, densit)
         ax0.hist(factu, num_bins, density = True)
         ax0.set_xlabel('Reduction factor', fontsize = FONTSIZE)
         ax0.set_ylabel('PDF', fontsize = FONTSIZE)
         ax0.set_xlim(-0.1, 1.1)
-        ax0.set_ylim(-0.1, 4.6)
+        #ax0.set_ylim(-0.1, 4.6)
         ax0.set_title(f'$t$ = {round(_time, 5)}  Myrs\nPoints: ' + f'$n_c > 10^{_id[0]}$ ' + r'$\rm{cm}^{-3}$', fontsize = FONTSIZE)
         ax0.grid(True, which='both', alpha=ALPHA)
         plt.setp(ax0.get_xticklabels(), fontsize = FONTSIZE)
         plt.setp(ax0.get_yticklabels(), fontsize = FONTSIZE)
 
         if True: # add a little window with the
-            x, y    = data_j["x"][j][:, 0][::10], data_j["x"][j][:, 1][::10]
+            x, y    = data_j["x"][j][:, 0], data_j["x"][j][:, 1]
             axins = inset_axes(ax0, width="40%", height="40%", loc='upper left')
             axins.yaxis.set_label_position('right')
             axins.yaxis.tick_right()
@@ -157,7 +254,7 @@ for _, data_j in enumerate([data6i4, data2i0, data2i1, data2i2, data4i3]):
         ax1.set_xscale('log')
         ax1.set_ylabel(r'$R$', fontsize = FONTSIZE)
         ax1.set_xlabel('$n_g$ [cm$^{-3}$]', fontsize = FONTSIZE)
-        ax1.set_title(r'$f_{<1}$'+f' = {round(f, 5)}\n Points: ' + f'$r_c < {np.round(radius,2)}$ ' + r'$\rm{Pc}$', fontsize = FONTSIZE)
+        ax1.set_title(r'$f_{<1}$'+f' = {round(f, 5)}\n Points: ' + f'$r_c < {np.round(radius,4)}$ ' + r'$\rm{Pc}$', fontsize = FONTSIZE)
         ax1.set_ylim(-0.1, 1.1)
         ax1.set_xlim(n_min, n_max)
         plt.setp(ax1.get_xticklabels(), fontsize = FONTSIZE)
@@ -166,226 +263,234 @@ for _, data_j in enumerate([data6i4, data2i0, data2i1, data2i2, data4i3]):
         ax1.legend()
 
         plt.savefig(f'./series/{_id}/map_rvn_mosaic{j}.png')
+        print(f'saved ./series/{_id}/map_rvn_mosaic{j}.png')
         plt.close(fig)
 
-if True:
-    # first three cases in a single row
-    fig, axd = plt.subplot_mosaic(
-        [["left", "middle", "right"]],
-        sharey=True,
-        gridspec_kw={"width_ratios": [1, 1, 1], "wspace": 0.05}
-    )
-    title = r"Mean ratio $N_{los}/N_{crs}$"
-
-    ratio0 = np.array([np.mean(nlos0/ncrs) for (nlos0,ncrs) in zip(data2i0["Nlos0"],data2i0["Ncrs"])]) 
-    ratio1 = np.array([np.median(nlos1/ncrs) for (nlos1,ncrs) in zip(data2i0["Nlos0"],data2i0["Ncrs"])])
-    ratio2 = np.array([np.std(nlos0/ncrs) for (nlos0,ncrs) in zip(data2i0["Nlos0"],data2i0["Ncrs"])])
-    
-    texto = r"$r^{ideal}_{cloud} = 0.1 \ \rm{pc}$ "
-    #axd["left"].plot(data2i0['t'], np.ones_like(data2i0['t']), '--', color="black")
-    axd["left"].text(data2i0['t'][0], 1.70, texto, fontsize=12, color="black", ha="left", va="bottom")
-    axd["left"].plot(data2i0['t'], ratio0, 'o-', label=r"Mean $N_{los}/N_{crs}$")
-    axd["left"].plot(data2i0['t'], ratio1, '.-', label=r"Median $N_{los}/N_{crs}$")
-    axd["left"].plot(data2i0['t'], ratio0 + ratio2, '--', color=COLORS[1], label="$\sigma$-band")
-    axd["left"].plot(data2i0['t'], ratio0 - ratio2, '--', color=COLORS[1])
-    axd["left"].set_ylabel(r"$N_{los}/N_{crs}$",fontsize=FONTSIZE)
-    axd["left"].set_xlabel("Time [Myrs]",fontsize=FONTSIZE)
-    axd["left"].grid(True, which='both', alpha=GRID_ALPHA)
-    axd["left"].legend(frameon = False)
-    
-    ratio0 = np.array([np.mean(nlos0/ncrs) for (nlos0,ncrs) in zip(data2i1["Nlos0"],data2i1["Ncrs"])]) 
-    ratio1 = np.array([np.median(nlos1/ncrs) for (nlos1,ncrs) in zip(data2i1["Nlos0"],data2i1["Ncrs"])])
-    ratio2 = np.array([np.std(nlos0/ncrs) for (nlos0,ncrs) in zip(data2i1["Nlos0"],data2i1["Ncrs"])])
-    
-    texto = r"$r^{ideal}_{cloud} = 0.2 \ \rm{pc}$"
-    axd["middle"].text(data2i1['t'][0], 1.70, texto, fontsize=12, color="black", ha="left", va="bottom")
-    #axd["middle"].plot(data2i1['t'], np.ones_like(data2i1['t']), '--', color="black")
-    axd["middle"].plot(data2i1['t'], ratio0, 'o-', label="Mean ratio")
-    axd["middle"].plot(data2i1['t'], ratio1, '.-', label="Median ratio")
-    axd["middle"].plot(data2i1['t'], ratio0 + ratio2, '--', color=COLORS[1])
-    axd["middle"].plot(data2i1['t'], ratio0 - ratio2, '--', color=COLORS[1])
-    axd["middle"].set_xlabel("Time [Myrs]",fontsize=FONTSIZE)
-    axd["middle"].grid(True, which='both', alpha=GRID_ALPHA)
-
-    
-    ratio0 = np.array([np.mean(nlos0/ncrs) for (nlos0,ncrs) in zip(data2i2["Nlos0"],data2i2["Ncrs"])]) 
-    ratio1 = np.array([np.median(nlos1/ncrs) for (nlos1,ncrs) in zip(data2i2["Nlos0"],data2i2["Ncrs"])])
-    ratio2 = np.array([np.std(nlos0/ncrs) for (nlos0,ncrs) in zip(data2i2["Nlos0"],data2i2["Ncrs"])])
-
-    texto = r"$r^{ideal}_{cloud} = 0.5 \ \rm{pc}$"
-    axd["right"].text(data2i2['t'][0], 1.70, texto, fontsize=12, color="black", ha="left", va="bottom")
-    axd["right"].plot(data2i2['t'], ratio0, 'o-', label="Mean ratio")
-    axd["right"].plot(data2i2['t'], ratio1, '.-', label="Median ratio")
-    axd["right"].plot(data2i2['t'], ratio0 + ratio2, '--', color=COLORS[1] )
-    axd["right"].plot(data2i2['t'], ratio0 - ratio2, '--', color=COLORS[1])
-    axd["right"].set_xlabel("Time [Myrs]",fontsize=FONTSIZE)
-    axd["right"].tick_params(labelleft=False)
-    axd["right"].grid(True, which='both', alpha=GRID_ALPHA)
-    fig.suptitle(title)
-    plt.savefig( "./series/" + 'ratios012.png', dpi=300)
     plt.close(fig)
 
-    # first three cases in a single row
-    fig, axd = plt.subplot_mosaic(
-        [["left", "right"]],
-        sharey=True,
-        gridspec_kw={"width_ratios": [1, 1], "wspace": 0.05}
-    )
-    title = r"Ratio $N_{los}/N_{crs}$"
+    _animate(_id)
 
-    ratio0 = np.array([np.mean(nlos0/ncrs) for (nlos0,ncrs) in zip(data4i3["Nlos0"],data4i3["Ncrs"])]) 
-    ratio1 = np.array([np.median(nlos1/ncrs) for (nlos1,ncrs) in zip(data4i3["Nlos0"],data4i3["Ncrs"])])
-    ratio2 = np.array([np.std(nlos0/ncrs) for (nlos0,ncrs) in zip(data4i3["Nlos0"],data4i3["Ncrs"])])
+if "e-" in sys.argv:
+    exit()
+
+fig, axd = plt.subplot_mosaic(
+    [["left", "middle", "right"]],
+    sharey=True,
+    gridspec_kw={"width_ratios": [1, 1, 1], "wspace": 0.05}
+)
+title = r"Mean ratio $N_{los}/N_{crs}$"
+
+#if len(sys.argv) == 1:
     
-    #axd["left"].plot(data2i0['t'], np.ones_like(data2i0['t']), '--', color="black")
-    axd["left"].plot(data4i3['t'], ratio0, 'o-', label=r"Mean $N_{los}/N_{crs}$")
-    axd["left"].plot(data4i3['t'], ratio1, '.-', label=r"Median $N_{los}/N_{crs}$")
-    axd["left"].plot(data4i3['t'], ratio0 + ratio2, '--', color=COLORS[1], label="$\sigma$-band")
-    axd["left"].plot(data4i3['t'], ratio0 - ratio2, '--', color=COLORS[1])
-    axd["left"].set_ylabel(r"$N_{los}/N_{crs}$",fontsize=FONTSIZE)
-    axd["left"].set_ylim(-0.0,2.5)
-    axd["left"].set_xlabel("Time [Myrs]",fontsize=FONTSIZE)
-    axd["left"].grid(True, which='both', alpha=GRID_ALPHA)
-    axd["left"].legend(frameon = False)
+ratio0 = np.array([np.mean(nlos0/ncrs) for (nlos0,ncrs) in zip(data2i0["Nlos0"],data2i0["Ncrs"])]) 
+ratio1 = np.array([np.median(nlos1/ncrs) for (nlos1,ncrs) in zip(data2i0["Nlos0"],data2i0["Ncrs"])])
+ratio2 = np.array([np.std(nlos0/ncrs) for (nlos0,ncrs) in zip(data2i0["Nlos0"],data2i0["Ncrs"])])
+
+texto = r"$r^{ideal}_{cloud} = 0.1 \ \rm{pc}$ "
+#axd["left"].plot(data2i0['t'], np.ones_like(data2i0['t']), '--', color="black")
+axd["left"].text(data2i0['t'][0], 1.70, texto, fontsize=12, color="black", ha="left", va="bottom")
+axd["left"].plot(data2i0['t'], ratio0, 'o-', label=r"Mean $N_{los}/N_{crs}$")
+axd["left"].plot(data2i0['t'], ratio1, '.-', label=r"Median $N_{los}/N_{crs}$")
+axd["left"].plot(data2i0['t'], ratio0 + ratio2, '--', color=COLORS[1], label="$\sigma$-band")
+axd["left"].plot(data2i0['t'], ratio0 - ratio2, '--', color=COLORS[1])
+axd["left"].set_ylabel(r"$N_{los}/N_{crs}$",fontsize=FONTSIZE)
+axd["left"].set_xlabel("Time [Myrs]",fontsize=FONTSIZE)
+axd["left"].grid(True, which='both', alpha=GRID_ALPHA)
+axd["left"].legend(frameon = False)
+
+ratio0 = np.array([np.mean(nlos0/ncrs) for (nlos0,ncrs) in zip(data2i1["Nlos0"],data2i1["Ncrs"])]) 
+ratio1 = np.array([np.median(nlos1/ncrs) for (nlos1,ncrs) in zip(data2i1["Nlos0"],data2i1["Ncrs"])])
+ratio2 = np.array([np.std(nlos0/ncrs) for (nlos0,ncrs) in zip(data2i1["Nlos0"],data2i1["Ncrs"])])
+
+texto = r"$r^{ideal}_{cloud} = 0.2 \ \rm{pc}$"
+axd["middle"].text(data2i1['t'][0], 1.70, texto, fontsize=12, color="black", ha="left", va="bottom")
+#axd["middle"].plot(data2i1['t'], np.ones_like(data2i1['t']), '--', color="black")
+axd["middle"].plot(data2i1['t'], ratio0, 'o-', label="Mean ratio")
+axd["middle"].plot(data2i1['t'], ratio1, '.-', label="Median ratio")
+axd["middle"].plot(data2i1['t'], ratio0 + ratio2, '--', color=COLORS[1])
+axd["middle"].plot(data2i1['t'], ratio0 - ratio2, '--', color=COLORS[1])
+axd["middle"].set_xlabel("Time [Myrs]",fontsize=FONTSIZE)
+axd["middle"].grid(True, which='both', alpha=GRID_ALPHA)
+
+
+ratio0 = np.array([np.mean(nlos0/ncrs) for (nlos0,ncrs) in zip(data2i2["Nlos0"],data2i2["Ncrs"])]) 
+ratio1 = np.array([np.median(nlos1/ncrs) for (nlos1,ncrs) in zip(data2i2["Nlos0"],data2i2["Ncrs"])])
+ratio2 = np.array([np.std(nlos0/ncrs) for (nlos0,ncrs) in zip(data2i2["Nlos0"],data2i2["Ncrs"])])
+
+texto = r"$r^{ideal}_{cloud} = 0.5 \ \rm{pc}$"
+axd["right"].text(data2i2['t'][0], 1.70, texto, fontsize=12, color="black", ha="left", va="bottom")
+axd["right"].plot(data2i2['t'], ratio0, 'o-', label="Mean ratio")
+axd["right"].plot(data2i2['t'], ratio1, '.-', label="Median ratio")
+axd["right"].plot(data2i2['t'], ratio0 + ratio2, '--', color=COLORS[1] )
+axd["right"].plot(data2i2['t'], ratio0 - ratio2, '--', color=COLORS[1])
+axd["right"].set_xlabel("Time [Myrs]",fontsize=FONTSIZE)
+axd["right"].tick_params(labelleft=False)
+axd["right"].grid(True, which='both', alpha=GRID_ALPHA)
+fig.suptitle(title)
+plt.savefig( "./series/" + 'ratios012.png', dpi=300)
+plt.close(fig)
+
+# first three cases in a single row
+fig, axd = plt.subplot_mosaic(
+    [["left", "right"]],
+    sharey=True,
+    gridspec_kw={"width_ratios": [1, 1], "wspace": 0.05}
+)
+title = r"Ratio $N_{los}/N_{crs}$"
+
+ratio0 = np.array([np.mean(nlos0/ncrs) for (nlos0,ncrs) in zip(data4i3["Nlos0"],data4i3["Ncrs"])]) 
+ratio1 = np.array([np.median(nlos1/ncrs) for (nlos1,ncrs) in zip(data4i3["Nlos0"],data4i3["Ncrs"])])
+ratio2 = np.array([np.std(nlos0/ncrs) for (nlos0,ncrs) in zip(data4i3["Nlos0"],data4i3["Ncrs"])])
+
+#axd["left"].plot(data2i0['t'], np.ones_like(data2i0['t']), '--', color="black")
+axd["left"].plot(data4i3['t'], ratio0, 'o-', label=r"Mean $N_{los}/N_{crs}$")
+axd["left"].plot(data4i3['t'], ratio1, '.-', label=r"Median $N_{los}/N_{crs}$")
+axd["left"].plot(data4i3['t'], ratio0 + ratio2, '--', color=COLORS[1], label="$\sigma$-band")
+axd["left"].plot(data4i3['t'], ratio0 - ratio2, '--', color=COLORS[1])
+axd["left"].set_ylabel(r"$N_{los}/N_{crs}$",fontsize=FONTSIZE)
+axd["left"].set_ylim(-0.0,2.5)
+axd["left"].set_xlabel("Time [Myrs]",fontsize=FONTSIZE)
+axd["left"].grid(True, which='both', alpha=GRID_ALPHA)
+axd["left"].legend(frameon = False)
+
+ratio0 = np.array([np.mean(nlos0/ncrs) for (nlos0,ncrs) in zip(data6i4["Nlos0"],data6i4["Ncrs"])]) 
+ratio1 = np.array([np.median(nlos1/ncrs) for (nlos1,ncrs) in zip(data6i4["Nlos0"],data6i4["Ncrs"])])
+ratio2 = np.array([np.std(nlos0/ncrs) for (nlos0,ncrs) in zip(data6i4["Nlos0"],data6i4["Ncrs"])])
+
+#axd["right"].plot(data2i2['t'], np.ones_like(data2i2['t']), '--', color="black")
+axd["right"].plot(data6i4['t'], ratio0, 'o-', label="Mean ratio")
+axd["right"].plot(data6i4['t'], ratio1, '.-', label="Median ratio")
+axd["right"].plot(data6i4['t'], ratio0 + ratio2, '--', color=COLORS[1] )
+axd["right"].plot(data6i4['t'], ratio0 - ratio2, '--', color=COLORS[1])
+axd["right"].set_ylim(-0.0,2.5)
+axd["right"].set_xlabel("Time [Myrs]",fontsize=FONTSIZE)
+axd["right"].tick_params(labelleft=False)
+axd["right"].grid(True, which='both',  alpha=GRID_ALPHA)
+fig.suptitle(title)
+plt.savefig( "./series/" + 'ratios34.png', dpi=300)
+plt.close(fig)
+
+"""Scatter plots 5 x 5"""
+
+n_plots = 5
+
+fig, ax = plt.subplots()
+
+ax.set_xlabel(r"$n_g$ [cm$^{-3}$]", fontsize=FONTSIZE)
+ax.set_ylabel(r"$n_{local}/ n_{ism}$ [adimensional]", fontsize=FONTSIZE)
+ax.grid(True, which='both', alpha=GRID_ALPHA)
+ax.set_xscale('log')
+ax.set_ylim(-0.1, 1.1)
+ax.set_xlim(10**2, 10**10)
+
+cmap = plt.get_cmap("viridis")
+
+# Plot lines with colors
+for i, (n_val, rt_val) in enumerate(zip(data2i0["n"][-1], data2i0["factu"][-1])):
+
+    _l_ = rt_val < 1
+    rt_val = rt_val[_l_]
+    n_val = n_val[_l_]
+    ax.scatter(n_val, rt_val, marker='x', color="red" ,alpha=0.6)
+
+fig.tight_layout()
+plt.savefig("./series/" + 'rfdenscatter.png', dpi=300)
+plt.close(fig)
+
+print(data2i0["t"][::5]) # [3.0125     3.625      4.25       4.55097656 4.55196533]
+print(data2i1["t"][::5]) # [3.0125     3.625      4.25       4.55097656 4.55196533]
+print(data2i2["t"][::5]) # [3.0125     3.625      4.25       4.55097656 4.55196533]
+print(data4i3["t"][::5]) # [3.0125     3.625      4.25       4.55097656 4.55196533]
+print(data6i4["t"][::5]) # [4.375      4.5515625  4.55201721]
+
+five_sample_mask = np.zeros(len(data2i0["t"]), dtype=bool)
+five_sample_mask[::5] = True
+
+t_min = np.min([data2i0["t"].min(), data2i1["t"].min(), data2i2["t"].min()])
+t_max = np.max([data2i0["t"].max(), data2i1["t"].max(), data2i2["t"].max()])
+
+fig, axs = plt.subplots(
+    3, 3,
+    sharey=True,
+    sharex=True,
+    gridspec_kw={"wspace": 0.0, "hspace": 0.0},
+    figsize=(12,12)
+)
+
+for j, data in enumerate([data2i0, data2i1, data2i2]):
+    time   = data["t"][five_sample_mask]  
+    surf   = data["surf"][five_sample_mask]  
+    factu  = data["factu"][five_sample_mask]
+    densit = data["n"][five_sample_mask]
+    radius = data['rloc']
+    print(radius)
     
-    ratio0 = np.array([np.mean(nlos0/ncrs) for (nlos0,ncrs) in zip(data6i4["Nlos0"],data6i4["Ncrs"])]) 
-    ratio1 = np.array([np.median(nlos1/ncrs) for (nlos1,ncrs) in zip(data6i4["Nlos0"],data6i4["Ncrs"])])
-    ratio2 = np.array([np.std(nlos0/ncrs) for (nlos0,ncrs) in zip(data6i4["Nlos0"],data6i4["Ncrs"])])
-
-    #axd["right"].plot(data2i2['t'], np.ones_like(data2i2['t']), '--', color="black")
-    axd["right"].plot(data6i4['t'], ratio0, 'o-', label="Mean ratio")
-    axd["right"].plot(data6i4['t'], ratio1, '.-', label="Median ratio")
-    axd["right"].plot(data6i4['t'], ratio0 + ratio2, '--', color=COLORS[1] )
-    axd["right"].plot(data6i4['t'], ratio0 - ratio2, '--', color=COLORS[1])
-    axd["right"].set_ylim(-0.0,2.5)
-    axd["right"].set_xlabel("Time [Myrs]",fontsize=FONTSIZE)
-    axd["right"].tick_params(labelleft=False)
-    axd["right"].grid(True, which='both',  alpha=GRID_ALPHA)
-    fig.suptitle(title)
-    plt.savefig( "./series/" + 'ratios34.png', dpi=300)
-    plt.close(fig)
-
-    """Scatter plots 5 x 5"""
-
-    n_plots = 5
-
-    fig, ax = plt.subplots()
+    ax = axs[j,0]
 
     ax.set_xlabel(r"$n_g$ [cm$^{-3}$]", fontsize=FONTSIZE)
-    ax.set_ylabel(r"$n_{local}/ n_{ism}$ [adimensional]", fontsize=FONTSIZE)
+    ax.set_ylabel(r"$R$ [adimensional]", fontsize=FONTSIZE)
     ax.grid(True, which='both', alpha=GRID_ALPHA)
     ax.set_xscale('log')
     ax.set_ylim(-0.1, 1.1)
-    ax.set_xlim(10**2, 10**10)
+    ax.set_xlim(10**2, 10**9)
+    ax.text(10**(7), 1.0, f"$t = {time[0]}$", fontsize=12, color="red", ha="left", va="bottom")
+    ax.text(10**(7), 0.9, f"$f = {surf[0]}$", fontsize=12, color="red", ha="left", va="bottom")
+    ax.text(10**(7), 0.8, r"$r_{c}" +f"= {radius}$", fontsize=12, color="red", ha="left", va="bottom")
+    n_val  = densit[0]
+    rt_val = factu[0] 
 
-    cmap = plt.get_cmap("viridis")
+    mask = rt_val < 1
+    rt_val = rt_val[mask]
+    n_val = n_val[mask]
 
-    # Plot lines with colors
-    for i, (n_val, rt_val) in enumerate(zip(data2i0["n"][-1], data2i0["factu"][-1])):
+    ax.scatter(n_val, rt_val, marker='x', color="black", alpha=0.3, s =1)
 
-        _l_ = rt_val < 1
-        rt_val = rt_val[_l_]
-        n_val = n_val[_l_]
-        ax.scatter(n_val, rt_val, marker='x', color="red" ,alpha=0.6)
+    ax = axs[j,1]
 
-    fig.tight_layout()
-    plt.savefig("./series/" + 'rfdenscatter.png', dpi=300)
-    plt.close(fig)
+    ax.set_xlabel(r"$n_g$ [cm$^{-3}$]", fontsize=FONTSIZE)
+    ax.grid(True, which='both', alpha=GRID_ALPHA)
+    ax.set_xscale('log')
+    ax.set_ylim(-0.1, 1.1)
+    ax.set_xlim(10**2, 10**9)
+    ax.text(10**(7), 1.0, f"$t = {time[2]}$", fontsize=12, color="red", ha="left", va="bottom")
+    ax.text(10**(7), 0.9, f"$f = {surf[2]}$", fontsize=12, color="red", ha="left", va="bottom")
+    ax.text(10**(7), 0.8, r"$r_{c}" +f"= {radius}$", fontsize=12, color="red", ha="left", va="bottom")
 
-    print(data2i0["t"][::5]) # [3.0125     3.625      4.25       4.55097656 4.55196533]
-    print(data2i1["t"][::5]) # [3.0125     3.625      4.25       4.55097656 4.55196533]
-    print(data2i2["t"][::5]) # [3.0125     3.625      4.25       4.55097656 4.55196533]
-    print(data4i3["t"][::5]) # [3.0125     3.625      4.25       4.55097656 4.55196533]
-    print(data6i4["t"][::5]) # [4.375      4.5515625  4.55201721]
+    n_val  = densit[2]
+    rt_val = factu[2] 
 
-    five_sample_mask = np.zeros(len(data2i0["t"]), dtype=bool)
-    five_sample_mask[::5] = True
+    mask = rt_val < 1
+    rt_val = rt_val[mask]
+    n_val = n_val[mask]
 
-    t_min = np.min([data2i0["t"].min(), data2i1["t"].min(), data2i2["t"].min()])
-    t_max = np.max([data2i0["t"].max(), data2i1["t"].max(), data2i2["t"].max()])
+    ax.scatter(n_val, rt_val, marker='x', color="black", alpha=0.3, s =1)
 
-    fig, axs = plt.subplots(
-        3, 3,
-        sharey=True,
-        sharex=True,
-        gridspec_kw={"wspace": 0.0, "hspace": 0.0},
-        figsize=(12,12)
-    )
+    ax = axs[j,2]
+
+    ax.set_xlabel(r"$n_g$ [cm$^{-3}$]", fontsize=FONTSIZE)
+    ax.grid(True, which='both', alpha=GRID_ALPHA)
+    ax.set_xscale('log')
+    ax.set_ylim(-0.1, 1.1)
+    ax.set_xlim(10**2, 10**9)
+    ax.text(10**(7), 1.0, f"$t = {round(time[4],2)}$", fontsize=12, color="red", ha="left", va="bottom")
+    ax.text(10**(7), 0.9, f"$f = {surf[4]}$", fontsize=12, color="red", ha="left", va="bottom")
+    ax.text(10**(7), 0.8, r"$r_{c}" +f"= {radius}$", fontsize=12, color="red", ha="left", va="bottom")
     
-    for j, data in enumerate([data2i0, data2i1, data2i2]):
-        time   = data["t"][five_sample_mask]  
-        surf   = data["surf"][five_sample_mask]  
-        factu  = data["factu"][five_sample_mask]
-        densit = data["n"][five_sample_mask]
-        radius = data['rloc']
-        print(radius)
-        
-        ax = axs[j,0]
+    n_val  = densit[4]
+    rt_val = factu[4] 
 
-        ax.set_xlabel(r"$n_g$ [cm$^{-3}$]", fontsize=FONTSIZE)
-        ax.set_ylabel(r"$R$ [adimensional]", fontsize=FONTSIZE)
-        ax.grid(True, which='both', alpha=GRID_ALPHA)
-        ax.set_xscale('log')
-        ax.set_ylim(-0.1, 1.1)
-        ax.set_xlim(10**2, 10**9)
-        ax.text(10**(7), 1.0, f"$t = {time[0]}$", fontsize=12, color="red", ha="left", va="bottom")
-        ax.text(10**(7), 0.9, f"$f = {surf[0]}$", fontsize=12, color="red", ha="left", va="bottom")
-        ax.text(10**(7), 0.8, r"$r_{c}" +f"= {radius}$", fontsize=12, color="red", ha="left", va="bottom")
-        n_val  = densit[0]
-        rt_val = factu[0] 
+    mask = rt_val < 1
+    rt_val = rt_val[mask]
+    n_val = n_val[mask]
 
-        mask = rt_val < 1
-        rt_val = rt_val[mask]
-        n_val = n_val[mask]
+    ax.scatter(n_val, rt_val, marker='x', color="black", alpha=0.3, s =1)
 
-        ax.scatter(n_val, rt_val, marker='x', color="black", alpha=0.3, s =1)
-
-        ax = axs[j,1]
-
-        ax.set_xlabel(r"$n_g$ [cm$^{-3}$]", fontsize=FONTSIZE)
-        ax.grid(True, which='both', alpha=GRID_ALPHA)
-        ax.set_xscale('log')
-        ax.set_ylim(-0.1, 1.1)
-        ax.set_xlim(10**2, 10**9)
-        ax.text(10**(7), 1.0, f"$t = {time[2]}$", fontsize=12, color="red", ha="left", va="bottom")
-        ax.text(10**(7), 0.9, f"$f = {surf[2]}$", fontsize=12, color="red", ha="left", va="bottom")
-        ax.text(10**(7), 0.8, r"$r_{c}" +f"= {radius}$", fontsize=12, color="red", ha="left", va="bottom")
-
-        n_val  = densit[2]
-        rt_val = factu[2] 
-
-        mask = rt_val < 1
-        rt_val = rt_val[mask]
-        n_val = n_val[mask]
-
-        ax.scatter(n_val, rt_val, marker='x', color="black", alpha=0.3, s =1)
-
-        ax = axs[j,2]
-
-        ax.set_xlabel(r"$n_g$ [cm$^{-3}$]", fontsize=FONTSIZE)
-        ax.grid(True, which='both', alpha=GRID_ALPHA)
-        ax.set_xscale('log')
-        ax.set_ylim(-0.1, 1.1)
-        ax.set_xlim(10**2, 10**9)
-        ax.text(10**(7), 1.0, f"$t = {round(time[4],2)}$", fontsize=12, color="red", ha="left", va="bottom")
-        ax.text(10**(7), 0.9, f"$f = {surf[4]}$", fontsize=12, color="red", ha="left", va="bottom")
-        ax.text(10**(7), 0.8, r"$r_{c}" +f"= {radius}$", fontsize=12, color="red", ha="left", va="bottom")
-        
-        n_val  = densit[4]
-        rt_val = factu[4] 
-
-        mask = rt_val < 1
-        rt_val = rt_val[mask]
-        n_val = n_val[mask]
-
-        ax.scatter(n_val, rt_val, marker='x', color="black", alpha=0.3, s =1)
-
-    plt.savefig(f"./series/rfdenscatter_mosaic.png", dpi=300)
-    plt.close(fig)
+plt.savefig(f"./series/rfdenscatter_mosaic.png", dpi=300)
+plt.close(fig)
 
 # Plotting individual distributions
 # individual plots per dataset
-for __, data in enumerate([data2i0, data2i1, data2i2, data4i3, data6i4]): 
+for __, data in enumerate(datas): 
     directory = "./series/" + data["id"] + '/'
     print("\nOutput will go into: ", directory)
     
