@@ -1,4 +1,4 @@
-vscode_lsp_terminal_prompt_tracker= {}ator import inset_axes
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.stats import skew, kurtosis
 from scipy.interpolate import griddata
 from scipy.ndimage import gaussian_filter
@@ -130,6 +130,7 @@ def _animate(_id):
         out.write(cv2.imread(f))
 
     out.release()
+
 
 if "e-" in sys.argv:
     fig = plt.figure()
