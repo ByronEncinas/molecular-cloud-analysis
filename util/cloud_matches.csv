@@ -1,0 +1,7 @@
+ideal_cloud,amb_cloud,mean_dist_pc,status
+cloud-0,cloud-0,1.73352779654477,kept
+cloud-1,cloud-2,1.4449158735725538,kept
+cloud-3,cloud-1,2.4944098262702243,kept
+cloud-5,cloud-3,2.896535731504264,kept
+cloud-2,cloud-4,12.516439868849076,removed
+cloud-4,cloud-5,9.84458756377126,removed

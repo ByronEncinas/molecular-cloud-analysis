@@ -64,7 +64,8 @@ def imporfromfile(file, identifier):
         "rurl":  rurl
     }
 
-files = sorted(glob.glob(f'../m-c-data/series/rloc/*.pkl'))
+files = sorted(glob.glob(f'../m-c-data/series/table/*.pkl'))
+files += sorted(glob.glob(f'../m-c-data/series/rloc/*.pkl'))
 #files = sorted(glob.glob(f'/home/leni/magnetic_pockets/12042026/data*.pkl'))
 print(files)
 
@@ -101,5 +102,5 @@ for index, file in enumerate(files):
     else:
         df = pd.concat([df, pd.DataFrame([info])], ignore_index=True)
 
-print(df)
+df.to_html('temp.html')
 
